@@ -25,10 +25,10 @@ public:
     float deltaT = 0;                         // The time delta accross each timestep
     float deltaS = 0;                         // The price delta for the price axis
     float volatility = 0;                     // The volatility for the noise (normally distributed)
-    float riskFreeR  = 0;                      // The risk free interest rate that is used in the black scholes model
+    float riskFreeR  = 0;                     // The risk free interest rate that is used in the black scholes model
     float dividend = 0; ;                     // Placeholder for dividend percentage reductions
     float startPrice = 0;                     // Initial Price
-    matrix grid;               // The grid we will use for all methods;
+    matrix grid;                              // The grid we will use for all methods;
 
     // Constructor
     FiniteDifferenceMethod(float timeHorizon, int timesteps, float maxS, int priceSteps, float strikePrice, float  volatility, float riskFreeR , float startPrice) : 
@@ -45,7 +45,8 @@ public:
     // Print the grid to the console
     void printGrid() {
         int maxTimesteps = 15;
-        int maxPriceSteps = 45;
+        //int maxPriceSteps = 10;
+        int maxPriceSteps = priceSteps; 
         for (int s = 0; s < priceSteps; s++) {
             for (int t = 0; t < timesteps; t++) {
                 if (t % (timesteps / maxTimesteps) == 0 && s % (priceSteps / maxPriceSteps) == 0)
@@ -166,7 +167,7 @@ public:
         // This function solves M.v = w iteratively using the Gauss-Seidel method.
 
         int n = w.size();
-        vec v(n, 0); // Initialize solution vector with zeros
+        vec v(n, 1); // Initialize solution vector with zeros
 
         for (int iter = 0; iter < max_iterations; iter++) {
             vec v_old = v;  // Store previous iteration values
@@ -178,30 +179,27 @@ public:
                     sum -= M[j][j - 1] * v[j - 1];
 
                 if (j < n - 1)
-                    sum -= M[j][j + 1] * v_old[j + 1];
+                    sum -= M[j][j + 1] * v[j + 1];
 
                 // Check for division by zero
-                if (std::abs(M[j][j]) < 1e-12) {
-                    break;
-                    throw std::runtime_error("Zero pivot encountered in Gauss-Seidel method.");
+                if (std::abs(M[j][j]) < 1e-8) {
+                    throw runtime_error("Zero pivot encountered in Gauss-Seidel method.");
                 }
+
                 v[j] = sum / M[j][j];
             }
 
             float error = 0;
-            for (int j = 0; j < n; j++) {
+            for (int j = 0; j < n; j++) 
                 error = max(error, abs(v[j] - v_old[j]));
-                if (error < tol)
-                    //cout << "Breaking" << endl;
-                    break; // Solution has converged
-            }
-                
 
+            if (error < tol)
+                    break; // Solution has converged
+                
         }
 
         return v;
     }
-
 
     // Fully Implicit finite difference method
     void implicitMethod(OptionType optionType) {
@@ -239,12 +237,12 @@ public:
                 timeStepPrices[p] = grid[p][timesteps - 1 - t];
             };
 
-            //vec newVec = gaussSeidelInversion(linearSystem, timeStepPrices);
-            //
-            //// Update grid
-            //for (int i = 0; i < priceSteps; i++) {
-            //    grid[i][timesteps - 1 - t] = newVec[i];
-            //}
+            vec newVec = gaussSeidelInversion(linearSystem, timeStepPrices);
+            
+            // Update grid
+            for (int i = 0; i < priceSteps; i++) {
+                grid[i][timesteps - 1 - t] = newVec[i];
+            }
             
         }
     }
@@ -255,8 +253,8 @@ int main()
 {   
     // These need to be inputs from the user for the exam
     float timeHorizon = 1;          // One year
-    long int timesteps = 14;     // Daily granularity 
-    long int priceSteps = 17;    // Price granularity
+    long int timesteps = 35;     // Daily granularity 
+    long int priceSteps = 35;    // Price granularity
     float strikePrice = 100;        // Strike price of the option
     float maxS = 2 * strikePrice;   // Should be three or four times the excersise price
     float riskFreeR = 0.05;         // Risk Free interest rate
@@ -267,17 +265,18 @@ int main()
     FiniteDifferenceMethod fdm(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
     //fdm.explicitMethod(OptionType::PUT);#
     fdm.implicitMethod(OptionType::PUT);
-    fdm.printGrid();
+    FiniteDifferenceMethod::printMatrix(fdm.grid);
+    //fdm.printGrid();
     //fdm.getPrice();
-    //fdm.saveGridToCSV();
+    fdm.saveGridToCSV();
 
     FiniteDifferenceMethod fdm2(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
     //fdm2.explicitMethod(OptionType::CALL);
     fdm2.implicitMethod(OptionType::CALL);
-    fdm2.printGrid();
+    FiniteDifferenceMethod::printMatrix(fdm2.grid);
     //fdm2.saveGridToCSV();
     //fdm2.getPrice();
-    cout << "Done" << endl;
+    cout << "Process Complete" << endl;
     return 0;
 }
 
