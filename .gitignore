@@ -1,0 +1,27 @@
+# Compiled binary files
+*.exe
+*.out
+*.app
+*.dll
+*.so
+*.dylib
+
+# Object files and archives
+*.o
+*.obj
+*.a
+*.lib
+
+# Debug and release folders (common for Visual Studio and CMake)
+Debug/
+x64/
+.vs/
+.vs/
+.sln
+*.VC.db.
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swn
