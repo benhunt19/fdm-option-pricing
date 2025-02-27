@@ -35,8 +35,6 @@ public:
         timeHorizon(timeHorizon), timesteps(timesteps), maxS(maxS), priceSteps(priceSteps), strikePrice(strikePrice), volatility(volatility), riskFreeR (riskFreeR ), startPrice(startPrice) {
         deltaT = timeHorizon / timesteps;
         deltaS = maxS / priceSteps;
-        //cout << "Delta T: " << deltaT << endl;
-        //cout << "Delta S: " << deltaS << endl;
         // Define the grid, a vector of vectors of floats
         grid.resize(priceSteps, vector<float>(timesteps, 0.0f));
 
@@ -72,8 +70,8 @@ public:
     // Save grid to csv for use in MATLAB or Python
     void saveGridToCSV() {
         cout << "Writing to CSV..." << endl;
-        ofstream out; // create new object (out) belonging to class ofstream for printing to a file, this is the users choice
-        const string file = "./surfaceTest.csv"; // " / table.csv" - can be .dat , .txt , .xls , .csv
+        ofstream out;
+        const string file = "./surfaceTest.csv";
         out.open(file, ios::out);
         for (int s = 0; s < grid.size(); s++) {
             for (int t = 0; t < grid[s].size(); t++) {
@@ -89,10 +87,12 @@ public:
 
     // Get the price
     float getPrice() {
-        float price = grid[int(startPrice / deltaS)][0];
-        float priceBelow = grid[int(startPrice / deltaS) - 1][0];
+        float priceBelow = grid[int(startPrice / deltaS)][0]; // 
         float priceAbove = grid[int(startPrice / deltaS) + 1][0];
-        cout << "Price: " << price << " Price above: " << priceAbove << " Price below:" << priceBelow << endl;
+        float stockPriceTrunc = int(startPrice / deltaS) * (deltaS);
+        float stockPriceCeil = int(startPrice / deltaS) * (deltaS) + deltaS;
+        float price = priceBelow + (priceAbove - priceBelow) * (startPrice - stockPriceTrunc) / (stockPriceCeil - stockPriceTrunc);
+        cout << "INTERPOLATED PRICE: " << price << endl;
         return price;
     };
 
@@ -164,7 +164,7 @@ public:
     };
 
     // Matrix inversion for use in the fully implicit method
-    static vec gaussSeidelInversion(matrix& M, vec& w, int max_iterations = 1000, double tol = 1e-6) {
+    static vec gaussSeidelSolve(matrix& M, vec& w, int max_iterations = 1000, double tol = 1e-6) {
         // This function solves M.v = w iteratively using the Gauss-Seidel method.
         // M: The matrix to invert
         // w: the RHS of the equation, the column vector to multiply by the inverse
@@ -238,7 +238,7 @@ public:
                 timeStepPrices[p] = grid[p][timesteps - t];
             };
 
-            vec newVec = gaussSeidelInversion(linearSystem, timeStepPrices);
+            vec newVec = gaussSeidelSolve(linearSystem, timeStepPrices);
             
             // Update grid
             for (int i = 1; i < priceSteps - 1; i++) {
@@ -248,6 +248,7 @@ public:
         }
     }
 
+    // Crank Nicolson - Hybrid explicit / implicit
     void crankNicolson(OptionType optionType) {
         // Set boundaries
         setBoundaries(optionType);
@@ -276,12 +277,9 @@ public:
 
         };
 
-        //printMatrix(A);
-        //printMatrix(B);
-
         // March backwards through the timesteps to update based on A*S_m-1 = B*S_m 
         // =>  S_m-1 = A^-1 * B * S_m  via Gauss Siedel
-        
+
         for (int t = 0; t < timesteps - 1; t++) {
             // 1. find B.S_m
 
@@ -291,31 +289,43 @@ public:
                 for (int y = 0; y < priceSteps; y++) {
                     BS[x] += B[x][y] * grid[y][timesteps - 1 - t];
                 };
-                //if (t == 0)
-                    //cout << BS[x] << endl;
             };
 
-            vec A_invBS = gaussSeidelInversion(A, BS);
+
+            //cout << "A size: " << A.size() << "    " << A[0].size() << endl;
+            //cout << "BS size: " << BS.size() << endl;
+
+            vec A_invBS = gaussSeidelSolve(A, BS);
+
+            // FOR DEBUGGING THE LARGE NEGATIVE VALUE IN BS[-1]
+            /*if (t == 0) {
+                for (int z = 0; z < A_invBS.size(); z++) {
+                    cout << setw(12) << A_invBS[z] << setw(12) <<  grid[z][timesteps - 1 - t] << setw(12) << BS[z] << setw(12) << B[z][z] << endl;
+                }
+
+                cout << B[B.size() - 1][B.size() - 2] << "    " << B[B.size() - 1][B.size() - 1] << endl;
+                
+            }*/
+
+            //printMatrix(B);
+            //printMatrix(A);
 
             // Update grid
             for (int i = 1; i < priceSteps - 1; i++) {
                 grid[i][timesteps - 2 - t] = A_invBS[i];
             };
-            
-        }
 
-        //printGrid(priceSteps, timesteps);
+        };
+    };
 
-
-    }
 };
 
 int main()
 {   
     // These need to be inputs from the user for the exam
     float timeHorizon = 1;          // One year
-    long int timesteps = 500;        // Daily granularity 
-    long int priceSteps = 500;       // Price granularity
+    long int timesteps = 1000;       // Daily granularity 
+    long int priceSteps = 100;      // Price granularity
     float strikePrice = 100;        // Strike price of the option
     float maxS = 3 * strikePrice;   // Should be three or four times the excersise price
     float riskFreeR = 0.05;         // Risk Free interest rate
@@ -324,40 +334,40 @@ int main()
     // Potentially cater for dividend payments
 
 
-    //cout << "EXPLICIT PUT" << endl;
-    //FiniteDifferenceMethod fdm(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    //fdm.explicitMethod(OptionType::PUT);
+    cout << "EXPLICIT PUT" << endl;
+    FiniteDifferenceMethod fdm(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    fdm.explicitMethod(OptionType::PUT);
     //fdm.printGrid(fdm.priceSteps, fdm.timesteps);
     //FiniteDifferenceMethod::printMatrix(fdm.grid);
     //fdm.printGrid();
-    //fdm.getPrice();    
+    fdm.getPrice();    
     //fdm.saveGridToCSV();
 
-    //cout << "EXPLICIT CALL" << endl;
-    //FiniteDifferenceMethod fdm2(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    //fdm2.explicitMethod(OptionType::CALL);
+    cout << "EXPLICIT CALL" << endl;
+    FiniteDifferenceMethod fdm2(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    fdm2.explicitMethod(OptionType::CALL);
     //FiniteDifferenceMethod::printMatrix(fdm2.grid);
     //fdm2.saveGridToCSV();
     //fdm2.printGrid(fdm2.priceSteps, fdm2.timesteps);
-    //fdm2.getPrice();
+    fdm2.getPrice();
     
 
-    //cout << "IMPLICIT PUT" << endl;
-    //FiniteDifferenceMethod fdm3(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    //fdm3.implicitMethod(OptionType::PUT);
+    cout << "IMPLICIT PUT" << endl;
+    FiniteDifferenceMethod fdm3(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    fdm3.implicitMethod(OptionType::PUT);
     //fdm3.printGrid(fdm3.priceSteps, fdm3.timesteps);
     //FiniteDifferenceMethod::printMatrix(fdm3.grid);
     //fdm3.printGrid();
-    //fdm3.getPrice();    
+    fdm3.getPrice();    
     //fdm3.saveGridToCSV();
 
-    //cout << "IMPLICIT CALL" << endl;
-    //FiniteDifferenceMethod fdm4(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    //fdm4.implicitMethod(OptionType::CALL);
+    cout << "IMPLICIT CALL" << endl;
+    FiniteDifferenceMethod fdm4(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    fdm4.implicitMethod(OptionType::CALL);
     //FiniteDifferenceMethod::printMatrix(fdm4.grid);
     //fdm4.saveGridToCSV();
     //fdm4.printGrid(fdm4.priceSteps, fdm4.timesteps);
-    //fdm4.getPrice();
+    fdm4.getPrice();
 
 
     cout << "CRANK PUT" << endl;
@@ -371,7 +381,7 @@ int main()
     cout << "CRANK CALL" << endl;
     FiniteDifferenceMethod fdm6(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
     fdm6.crankNicolson(OptionType::CALL);
-    fdm6.saveGridToCSV();
+    //fdm6.saveGridToCSV();
     //fdm6.printGrid(fdm6.priceSteps, fdm6.timesteps);
     fdm6.getPrice();
 
