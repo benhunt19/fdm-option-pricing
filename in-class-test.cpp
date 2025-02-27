@@ -43,10 +43,10 @@ public:
     };
 
     // Print the grid to the console
-    void printGrid() {
-        int maxTimesteps = 15;
-        //int maxPriceSteps = 10;
-        int maxPriceSteps = priceSteps; 
+    void printGrid(int maxPriceSteps = 45, int maxTimesteps = 20) {
+        //int maxTimesteps = 15;
+        //int maxPriceSteps = 20;
+        //int maxPriceSteps = priceSteps; 
         for (int s = 0; s < priceSteps; s++) {
             for (int t = 0; t < timesteps; t++) {
                 if (t % (timesteps / maxTimesteps) == 0 && s % (priceSteps / maxPriceSteps) == 0)
@@ -89,16 +89,16 @@ public:
 
     // Get the price
     void getPrice() {
-        float price = grid[int(startPrice / deltaS)][grid.size() - 1];
-        float priceBelow = grid[int(startPrice / deltaS) - 1][grid.size() - 1];
-        float priceAbove = grid[int(startPrice / deltaS) + 1][grid.size() - 1];
-        cout << "The price is: " << price << "  Below: " << priceBelow << "  Above: " << priceAbove << endl << endl;
+        float price = grid[int(startPrice / deltaS)][0];
+        float priceBelow = grid[int(startPrice / deltaS) - 1][0];
+        float priceAbove = grid[int(startPrice / deltaS) + 1][0];
+        cout << "Price: " << price << " Price above: " << priceAbove << " Price below:" << priceBelow << endl;
     }
 
     // Setup boundary conditions for the different option types
     void setBoundaries(OptionType optionType) {
         if (optionType == OptionType::PUT) {
-            cout << "PUT" << endl;
+            //cout << "PUT" << endl;
             // 1. Final timestep price
             for (int p = 0; p < priceSteps; p++) {
                 grid[p][timesteps - 1] = max(strikePrice - (deltaS * p), 0.0f);
@@ -110,7 +110,7 @@ public:
             };
         }
         else if (optionType == OptionType::CALL) {
-            cout << "CALL" << endl;
+            //cout << "CALL" << endl;
             // 1. Final timestep price
             for (float p = 0; p < priceSteps; p++) {
                 grid[p][timesteps - 1] = max((deltaS * p) - strikePrice, 0.0f);
@@ -140,20 +140,20 @@ public:
 
         // Backwards marching
         // Initialise the coefficients 
-        float a_n = 0.0f, b_n = 0.0f, c_n = 0.0f;
+        float A_n = 0.0f, B_n = 0.0f, C_n = 0.0f;
         // For each timestep (marchin backwards)
         for (int t = 1; t < timesteps; t++) {
             // For each node (not on the boundary)
             for (int s = 1; s < priceSteps - 1; s++) {
 
-                a_n = 0.5 * (pow(volatility, 2) * pow(s, 2) - s * (riskFreeR  - dividend)) * deltaT;
-                b_n = 1 - (riskFreeR  + pow(volatility, 2) * pow(s, 2)) * deltaT;
-                c_n = 0.5 * (pow(volatility, 2) * pow(s, 2) + s * (riskFreeR  - dividend)) * deltaT;
+                A_n = 0.5 * (pow(volatility, 2) * pow(s, 2) - s * (riskFreeR  - dividend)) * deltaT;
+                B_n = 1 - (riskFreeR  + pow(volatility, 2) * pow(s, 2)) * deltaT;
+                C_n = 0.5 * (pow(volatility, 2) * pow(s, 2) + s * (riskFreeR  - dividend)) * deltaT;
                 
                 grid[s][timesteps - 1 - t] = 
-                    a_n * grid[s - 1][timesteps - t] +
-                    b_n * grid[s][timesteps - t] + 
-                    c_n * grid[s + 1][timesteps - t];
+                    A_n * grid[s - 1][timesteps - t] +
+                    B_n * grid[s][timesteps - t] + 
+                    C_n * grid[s + 1][timesteps - t];
 
                 // Set to zero if less than threshold
                 if (grid[s][timesteps - 1 - t] < pow(2, -10))
@@ -167,7 +167,7 @@ public:
         // This function solves M.v = w iteratively using the Gauss-Seidel method.
 
         int n = w.size();
-        vec v(n, 1); // Initialize solution vector with zeros
+        vec v(n, 0); // Initialize solution vector with zeros
 
         for (int iter = 0; iter < max_iterations; iter++) {
             vec v_old = v;  // Store previous iteration values
@@ -203,6 +203,7 @@ public:
 
     // Fully Implicit finite difference method
     void implicitMethod(OptionType optionType) {
+        
         // Set boundaries
         setBoundaries(optionType);
 
@@ -222,60 +223,89 @@ public:
             if (s < priceSteps - 1)
                 linearSystem[s][s + 1] = -0.5 * (pow(volatility, 2) * pow(s, 2) + s * (riskFreeR - dividend)) * deltaT;
         }
-
-        printMatrix(linearSystem);
-
-        cout << endl;
-
+        
+        // Print matrix of coefficients
+        //printMatrix(linearSystem);
         
         // Loop over all timesteps
-        for (int t = 0; t < timesteps - 1; t++) {
+        for (int t = 1; t < timesteps; t++) {
             
             // Get prices at timestep
             vec timeStepPrices(priceSteps, 0);
             for (int p = 0; p < priceSteps; p++) {
-                timeStepPrices[p] = grid[p][timesteps - 1 - t];
+                timeStepPrices[p] = grid[p][timesteps - t];
             };
 
             vec newVec = gaussSeidelInversion(linearSystem, timeStepPrices);
             
             // Update grid
-            for (int i = 0; i < priceSteps; i++) {
+            for (int i = 1; i < priceSteps - 1; i++) {
                 grid[i][timesteps - 1 - t] = newVec[i];
             }
             
         }
     }
 
+    void crankNicolson(OptionType optionType) {
+        // Set boundaries
+        setBoundaries(optionType);
+    }
 };
 
 int main()
 {   
     // These need to be inputs from the user for the exam
     float timeHorizon = 1;          // One year
-    long int timesteps = 35;     // Daily granularity 
-    long int priceSteps = 35;    // Price granularity
+    long int timesteps = 8000;        // Daily granularity 
+    long int priceSteps = 400;       // Price granularity
     float strikePrice = 100;        // Strike price of the option
-    float maxS = 2 * strikePrice;   // Should be three or four times the excersise price
+    float maxS = 3 * strikePrice;   // Should be three or four times the excersise price
     float riskFreeR = 0.05;         // Risk Free interest rate
     float volatility = 0.2;         // Volatility in rand
     float startPrice = 100;         // Price when t=0
     // Potentially cater for dividend payments
 
-    FiniteDifferenceMethod fdm(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    //fdm.explicitMethod(OptionType::PUT);#
-    fdm.implicitMethod(OptionType::PUT);
-    FiniteDifferenceMethod::printMatrix(fdm.grid);
-    //fdm.printGrid();
-    //fdm.getPrice();
-    fdm.saveGridToCSV();
 
+    cout << "EXPLICIT PUT" << endl;
+    FiniteDifferenceMethod fdm(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    fdm.explicitMethod(OptionType::PUT);
+    //fdm.implicitMethod(OptionType::PUT);
+    //fdm.printGrid(fdm.priceSteps, fdm.timesteps);
+    //FiniteDifferenceMethod::printMatrix(fdm.grid);
+    //fdm.printGrid();
+    fdm.getPrice();    
+    //fdm.saveGridToCSV();
+
+    cout << "EXPLICIT CALL" << endl;
     FiniteDifferenceMethod fdm2(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    //fdm2.explicitMethod(OptionType::CALL);
-    fdm2.implicitMethod(OptionType::CALL);
-    FiniteDifferenceMethod::printMatrix(fdm2.grid);
+    fdm2.explicitMethod(OptionType::CALL);
+    //fdm2.implicitMethod(OptionType::CALL);
+    //FiniteDifferenceMethod::printMatrix(fdm2.grid);
     //fdm2.saveGridToCSV();
-    //fdm2.getPrice();
+    //fdm2.printGrid(fdm2.priceSteps, fdm2.timesteps);
+    fdm2.getPrice();
+    
+
+
+    cout << "IMPLICIT PUT" << endl;
+    FiniteDifferenceMethod fdm3(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    //fdm3.explicitMethod(OptionType::PUT);
+    fdm3.implicitMethod(OptionType::PUT);
+    //fdm3.printGrid(fdm3.priceSteps, fdm3.timesteps);
+    //FiniteDifferenceMethod::printMatrix(fdm3.grid);
+    //fdm3.printGrid();
+    fdm3.getPrice();    
+    //fdm3.saveGridToCSV();
+
+    cout << "IMPLICIT CALL" << endl;
+    FiniteDifferenceMethod fdm4(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
+    //fdm4.explicitMethod(OptionType::CALL);
+    fdm4.implicitMethod(OptionType::CALL);
+    //FiniteDifferenceMethod::printMatrix(fdm4.grid);
+    //fdm4.saveGridToCSV();
+    //fdm4.printGrid(fdm4.priceSteps, fdm4.timesteps);
+    fdm4.getPrice();
+
     cout << "Process Complete" << endl;
     return 0;
 }
