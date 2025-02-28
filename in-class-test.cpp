@@ -137,7 +137,7 @@ public:
         // Backwards marching
         // Initialise the coefficients 
         float A_n = 0.0f, B_n = 0.0f, C_n = 0.0f;
-        // For each timestep (marchin backwards)
+        // For each timestep (marching backwards)
         for (int t = 1; t < timesteps; t++) {
             // For each node (not on the boundary)
             for (int s = 1; s < priceSteps - 1; s++) {
@@ -326,7 +326,6 @@ struct fdmInputs {
 
 // Function to prompt input from the user
 fdmInputs promptInputs() {
-    
     fdmInputs inputs;
 
     cout << "Enter time horizon (years): ";
@@ -352,8 +351,6 @@ fdmInputs promptInputs() {
 
 int main()
 {   
-
-    
 
     //float timeHorizon = 1;          // One year
     //float strikePrice = 100;        // Strike price of the option
