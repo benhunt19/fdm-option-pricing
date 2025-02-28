@@ -40,11 +40,8 @@ public:
 
     };
 
-    // Print the grid to the console
+    // Print the FDM grid to the console, for debugging
     void printGrid(int maxPriceSteps = 45, int maxTimesteps = 20) {
-        //int maxTimesteps = 15;
-        //int maxPriceSteps = 20;
-        //int maxPriceSteps = priceSteps; 
         for (int s = 0; s < priceSteps; s++) {
             for (int t = 0; t < timesteps; t++) {
                 if (t % (timesteps / maxTimesteps) == 0 && s % (priceSteps / maxPriceSteps) == 0)
@@ -67,7 +64,7 @@ public:
         cout << endl;
     };
 
-    // Save grid to csv for use in MATLAB or Python
+    // Save grid to csv for use in MATLAB or Python, for debugging
     void saveGridToCSV() {
         cout << "Writing to CSV..." << endl;
         ofstream out;
@@ -82,25 +79,24 @@ public:
                     out << ',';
             };
         };
-        out.close(); // file table.xls is now closed
+        out.close();
     };
 
-    // Get the price
+    // Get the interpolated price based on the current (start) price and the grid at t = T
     float getPrice() {
         float priceBelow = grid[int(startPrice / deltaS)][0]; // 
         float priceAbove = grid[int(startPrice / deltaS) + 1][0];
         float stockPriceTrunc = int(startPrice / deltaS) * (deltaS);
         float stockPriceCeil = int(startPrice / deltaS) * (deltaS) + deltaS;
         float price = priceBelow + (priceAbove - priceBelow) * (startPrice - stockPriceTrunc) / (stockPriceCeil - stockPriceTrunc);
-        cout << "INTERPOLATED PRICE: " << price << endl;
+        cout << "Price: " << price << endl;
         return price;
     };
 
     // Setup boundary conditions for the different option types
     void setBoundaries(OptionType optionType) {
         if (optionType == OptionType::PUT) {
-            //cout << "PUT" << endl;
-            // 1. Final timestep price
+            // 1. Final timestep price for a put max(strike - price, 0)
             for (int p = 0; p < priceSteps; p++) {
                 grid[p][timesteps - 1] = max(strikePrice - (deltaS * p), 0.0f);
             };
@@ -111,7 +107,6 @@ public:
             };
         }
         else if (optionType == OptionType::CALL) {
-            //cout << "CALL" << endl;
             // 1. Final timestep price
             for (float p = 0; p < priceSteps; p++) {
                 grid[p][timesteps - 1] = max((deltaS * p) - strikePrice, 0.0f);
@@ -123,7 +118,7 @@ public:
             };
         }
         else {
-            // Check (for robustness)
+            // Check (for safety)
             throw runtime_error("Incorrect option types");
         }
     }
@@ -163,8 +158,8 @@ public:
         };
     };
 
-    // Matrix inversion for use in the fully implicit method
-    static vec gaussSeidelSolve(matrix& M, vec& w, int max_iterations = 1000, double tol = 1e-6) {
+    // Matrix inversion method for use in the fully implicit and Crank Nicolson methods
+    static vec gaussSeidelSolve(matrix& M, vec& w, int max_iterations = 1000, double tol = 1e-10) {
         // This function solves M.v = w iteratively using the Gauss-Seidel method.
         // M: The matrix to invert
         // w: the RHS of the equation, the column vector to multiply by the inverse
@@ -184,7 +179,7 @@ public:
                     sum -= M[j][j + 1] * v[j + 1];
 
                 // Check for division by zero
-                if (std::abs(M[j][j]) < 1e-8) {
+                if (abs(M[j][j]) < 1e-8) {
                     throw runtime_error("Zero pivot encountered in Gauss-Seidel method.");
                 }
 
@@ -193,10 +188,11 @@ public:
 
             float error = 0;
             for (int j = 0; j < n; j++) 
-                error = max(error, abs(v[j] - v_old[j]));
+                error = max(error, fabs(v[j] - v_old[j]));
 
+            // Solution has converged
             if (error < tol)
-                    break; // Solution has converged
+                    break; 
                 
         }
 
@@ -250,10 +246,11 @@ public:
 
     // Crank Nicolson - Hybrid explicit / implicit
     void crankNicolson(OptionType optionType) {
+        
         // Set boundaries
         setBoundaries(optionType);
 
-        // Initialise the coefficients for the matrix A and B A*S_m = B*S_m+1
+        // Initialise matrix A and B s.t. A*V_m = B*V_m+1
         matrix A(priceSteps, vector<float>(priceSteps, 0));
         matrix B(priceSteps, vector<float>(priceSteps, 0));
 
@@ -277,42 +274,39 @@ public:
 
         };
 
-        // March backwards through the timesteps to update based on A*S_m-1 = B*S_m 
-        // =>  S_m-1 = A^-1 * B * S_m  via Gauss Siedel
+        // March backwards through the timesteps to update based on A*V_m-1 = B*V_m 
+        // =>  V_m-1 = A^-1 * B * V_m  via Gauss Siedel
 
         for (int t = 0; t < timesteps - 1; t++) {
             // 1. find B.S_m
 
             // Vector, the result of B * S_m
-            vec BS(priceSteps, 0);
+            vec BV(priceSteps, 0);
             for (int x = 0; x < priceSteps; x++) {
                 for (int y = 0; y < priceSteps; y++) {
-                    BS[x] += B[x][y] * grid[y][timesteps - 1 - t];
+                    BV[x] += B[x][y] * grid[y][timesteps - 1 - t];
                 };
             };
 
-
-            //cout << "A size: " << A.size() << "    " << A[0].size() << endl;
-            //cout << "BS size: " << BS.size() << endl;
-
-            vec A_invBS = gaussSeidelSolve(A, BS);
+            vec A_invBV = gaussSeidelSolve(A, BV);
 
             // FOR DEBUGGING THE LARGE NEGATIVE VALUE IN BS[-1]
             /*if (t == 0) {
-                for (int z = 0; z < A_invBS.size(); z++) {
-                    cout << setw(12) << A_invBS[z] << setw(12) <<  grid[z][timesteps - 1 - t] << setw(12) << BS[z] << setw(12) << B[z][z] << endl;
+                for (int z = 0; z < A_invBV.size(); z++) {
+                    cout << setw(12) << A_invBV[z] << setw(12) <<  grid[z][timesteps - 1 - t] << setw(12) << BV[z] << setw(12) << B[z][z] << endl;
                 }
 
                 cout << B[B.size() - 1][B.size() - 2] << "    " << B[B.size() - 1][B.size() - 1] << endl;
                 
             }*/
 
-            //printMatrix(B);
+            //if (t==0)
+                //printMatrix(B);
             //printMatrix(A);
 
             // Update grid
             for (int i = 1; i < priceSteps - 1; i++) {
-                grid[i][timesteps - 2 - t] = A_invBS[i];
+                grid[i][timesteps - 2 - t] = A_invBV[i];
             };
 
         };
@@ -320,18 +314,67 @@ public:
 
 };
 
+// Struct object for storing inputs from the  user
+struct fdmInputs {
+    float timeHorizon = 0;
+    float strikePrice = 0;
+    float riskFreeR = 0;
+    float volatility = 0;
+    float maxS = 0;
+    float startPrice = 0;
+};
+
+// Function to prompt input from the user
+fdmInputs promptInputs() {
+    
+    fdmInputs inputs;
+
+    cout << "Enter time horizon (years): ";
+    cin >> inputs.timeHorizon;
+
+    cout << "Enter strike price: ";
+    cin >> inputs.strikePrice;
+
+    cout << "Enter risk-free interest rate (as a decimal, e.g., 0.05 for 5%): ";
+    cin >> inputs.riskFreeR;
+
+    cout << "Enter volatility (as a decimal, e.g., 0.2 for 20%): ";
+    cin >> inputs.volatility;
+
+    cout << "Enter starting price: ";
+    cin >> inputs.startPrice;
+
+    // Compute maxS based on the strike price
+    inputs.maxS = 3 * inputs.strikePrice;
+
+    return inputs;
+}
+
 int main()
 {   
-    // These need to be inputs from the user for the exam
-    float timeHorizon = 1;          // One year
-    long int timesteps = 1000;       // Daily granularity 
-    long int priceSteps = 100;      // Price granularity
-    float strikePrice = 100;        // Strike price of the option
+
+    
+
+    //float timeHorizon = 1;          // One year
+    //float strikePrice = 100;        // Strike price of the option
+    //float startPrice = 100;         // Price when t=0
+    //float riskFreeR = 0.05;         // Risk Free interest rate
+    //float volatility = 0.2;         // Volatility in rand
+
+    fdmInputs inputs = promptInputs();
+
+    float timeHorizon = inputs.timeHorizon;          // One year
+    float strikePrice = inputs.strikePrice;        // Strike price of the option
+    float startPrice = inputs.startPrice;         // Price when t=0
+    float riskFreeR = inputs.riskFreeR;         // Risk Free interest rate
+    float volatility = inputs.volatility;         // Volatility in rand
+
+    float dividends = 0;            // NOT USED
+
     float maxS = 3 * strikePrice;   // Should be three or four times the excersise price
-    float riskFreeR = 0.05;         // Risk Free interest rate
-    float volatility = 0.2;         // Volatility in rand
-    float startPrice = 100;         // Price when t=0
-    // Potentially cater for dividend payments
+
+    long int timesteps = 3000;      // Daily granularity 
+    long int priceSteps = 180;      // Price granularity
 
 
     cout << "EXPLICIT PUT" << endl;
