@@ -14,6 +14,14 @@ enum class OptionType {
     CALL
 };
 
+enum class MethodType {
+    EXPLICIT,
+    AMERICAN_EXPLICIT, // Question 1 method
+    IMPLICIT,
+    CRANK,
+	THETA              // Question 2 method
+};
+
 class FiniteDifferenceMethod {
 public:
 
@@ -137,7 +145,8 @@ public:
         // Backwards marching
         // Initialise the coefficients 
         float A_n = 0.0f, B_n = 0.0f, C_n = 0.0f;
-        // For each timestep (marching backwards)
+
+        // t is increasing but it is indexed negatively so it is is BACKWARDS MARCHING
         for (int t = 1; t < timesteps; t++) {
             // For each node (not on the boundary)
             for (int s = 1; s < priceSteps - 1; s++) {
@@ -158,16 +167,54 @@ public:
         };
     };
 
+    // ----- QUESTION 1 - AMERICAN OPTIONS EXPLICIT METHOD ----
+    void americanExplicitMethod(OptionType optionType) {
+        
+        // Check for stability
+        if (deltaT > pow(deltaS, 2) / (pow(volatility, 2) * pow(maxS, 2))) {
+            cerr << "NOT STABLE" << endl;
+            throw runtime_error("The deltas are unstable");
+        };
+
+        // Set boundaries
+        setBoundaries(optionType);
+
+        // Backwards marching
+        // Initialise the coefficients 
+        float A_n = 0.0f, B_n = 0.0f, C_n = 0.0f;
+
+        // t is increasing but it is indexed negatively so it is is BACKWARDS MARCHING
+        for (int t = 1; t < timesteps; t++) {
+            // For each node (not on the boundary)
+            for (int s = 1; s < priceSteps - 1; s++) {
+
+                A_n = 0.5 * (pow(volatility, 2) * pow(s, 2) - s * (riskFreeR - dividend)) * deltaT;
+                B_n = 1 - (riskFreeR + pow(volatility, 2) * pow(s, 2)) * deltaT;
+                C_n = 0.5 * (pow(volatility, 2) * pow(s, 2) + s * (riskFreeR - dividend)) * deltaT;
+
+				// Value of the option at time t from BSE
+                float U = A_n * grid[s - 1][timesteps - t] + B_n * grid[s][timesteps - t] + C_n * grid[s + 1][timesteps - t];
+				
+				// American Option early exercise payoff
+				float payoff = (optionType == OptionType::PUT) ? max(strikePrice - s * deltaS, 0.0f) : max(s * deltaS - strikePrice, 0.0f);
+
+				// Set the value to be the max of the payoff and the value from the Black Scholes equation
+                grid[s][timesteps - 1 - t] = max(U, payoff);
+            };
+        };
+    };
+
     // Matrix inversion method for use in the fully implicit and Crank Nicolson methods
     static vec gaussSeidelSolve(matrix& M, vec& w, int max_iterations = 1000, double tol = 1e-10) {
         // This function solves M.v = w iteratively using the Gauss-Seidel method.
         // M: The matrix to invert
         // w: the RHS of the equation, the column vector to multiply by the inverse
         int n = w.size();
+        
         vec v(n, 0); // Initialize solution vector with zeros
 
         for (int iter = 0; iter < max_iterations; iter++) {
-            vec v_old = v;  // Store previous iteration values
+            vec v_old = v;
 
             for (int j = 0; j < n; j++) {
                 float sum = w[j];
@@ -183,6 +230,7 @@ public:
                     throw runtime_error("Zero pivot encountered in Gauss-Seidel method.");
                 }
 
+                // Update output vector
                 v[j] = sum / M[j][j];
             }
 
@@ -192,7 +240,7 @@ public:
 
             // Solution has converged
             if (error < tol)
-                    break; 
+                break; 
                 
         }
 
@@ -222,10 +270,8 @@ public:
                 linearSystem[s][s + 1] = -0.5 * (pow(volatility, 2) * pow(s, 2) + s * (riskFreeR - dividend)) * deltaT;
         }
         
-        // Print matrix of coefficients
-        //printMatrix(linearSystem);
-        
         // Loop over all timesteps
+        // t is increasing but it is indexed negatively so it is is BACKWARDS MARCHING
         for (int t = 1; t < timesteps; t++) {
             
             // Get prices at timestep
@@ -277,6 +323,7 @@ public:
         // March backwards through the timesteps to update based on A*V_m-1 = B*V_m 
         // =>  V_m-1 = A^-1 * B * V_m  via Gauss Siedel
 
+        // t is increasing but it is indexed negatively so it is is BACKWARDS MARCHING
         for (int t = 0; t < timesteps - 1; t++) {
             // 1. find B.S_m
 
@@ -290,19 +337,67 @@ public:
 
             vec A_invBV = gaussSeidelSolve(A, BV);
 
-            // FOR DEBUGGING THE LARGE NEGATIVE VALUE IN BS[-1]
-            /*if (t == 0) {
-                for (int z = 0; z < A_invBV.size(); z++) {
-                    cout << setw(12) << A_invBV[z] << setw(12) <<  grid[z][timesteps - 1 - t] << setw(12) << BV[z] << setw(12) << B[z][z] << endl;
-                }
+            // Update grid
+            for (int i = 1; i < priceSteps - 1; i++) {
+                grid[i][timesteps - 2 - t] = A_invBV[i];
+            };
 
-                cout << B[B.size() - 1][B.size() - 2] << "    " << B[B.size() - 1][B.size() - 1] << endl;
-                
-            }*/
+        };
+    };
 
-            //if (t==0)
-                //printMatrix(B);
-            //printMatrix(A);
+    // --- QUESTION 2 - THETA METHOD ---
+    void thetaMethod(OptionType optionType, float theta) {
+
+        // Set boundaries
+        setBoundaries(optionType);
+
+        // Initialise matrix A and B s.t. A*V_m = B*V_m+1
+        matrix A(priceSteps, vector<float>(priceSteps, 0));
+        matrix B(priceSteps, vector<float>(priceSteps, 0));
+
+        // Build matrices A and B (with theta weighting)
+        for (int s = 0; s < priceSteps; s++) {
+            
+            float S = s * deltaS;
+            float sigma2_S2 = pow(volatility, 2) * pow(s, 2);
+            float r_minus_q_S = (riskFreeR - dividend) * s;
+
+            // Populate a_n
+            if (s > 0) {
+                float a_n = 0.5 * (sigma2_S2 - r_minus_q_S);  // Common term
+                A[s][s - 1] = -theta * a_n * deltaT;          // theta-weighted
+                B[s][s - 1] = (1 - theta) * a_n * deltaT;     // (1-theta)-weighted
+            }
+
+            // Populate b_n
+            float b_n = riskFreeR + sigma2_S2;               // Common term
+            A[s][s] = 1 + theta * b_n * deltaT;              // theta-weighted
+            B[s][s] = 1 - (1 - theta) * b_n * deltaT;        // (1-theta)-weighted
+
+            // Populate c_n
+            if (s < priceSteps - 1) {
+                float c_n = 0.5 * (sigma2_S2 + r_minus_q_S);  // Common term
+                A[s][s + 1] = -theta * c_n * deltaT;          // theta-weighted
+                B[s][s + 1] = (1 - theta) * c_n * deltaT;     // (1-theta)-weighted
+            }
+        }
+
+        // March backwards through the timesteps to update based on A*V_m-1 = B*V_m 
+        // =>  V_m-1 = A^-1 * B * V_m  via Gauss Siedel
+
+        // t is increasing but it is indexed negatively so it is is BACKWARDS MARCHING
+        for (int t = 0; t < timesteps - 1; t++) {
+            // 1. find B.S_m
+
+            // Vector, the result of B * S_m
+            vec BV(priceSteps, 0);
+            for (int x = 0; x < priceSteps; x++) {
+                for (int y = 0; y < priceSteps; y++) {
+                    BV[x] += B[x][y] * grid[y][timesteps - 1 - t];
+                };
+            };
+
+            vec A_invBV = gaussSeidelSolve(A, BV);
 
             // Update grid
             for (int i = 1; i < priceSteps - 1; i++) {
@@ -312,21 +407,38 @@ public:
         };
     };
 
+    
+
 };
 
 // Struct object for storing inputs from the  user
 struct fdmInputs {
-    float timeHorizon = 0;
-    float strikePrice = 0;
-    float riskFreeR = 0;
-    float volatility = 0;
-    float maxS = 0;
-    float startPrice = 0;
+	int optionType = 0;    // 0 for PUT, 1 for CALL
+    int methodType = 0;    // Which FDM method to use
+	float timeHorizon = 0; // Time horizon in years
+    float strikePrice = 0; // Strike price of the option
+    float riskFreeR = 0;   // Risk Free interest rate
+	float volatility = 0;  // Volatility of the underlying asset
+	float startPrice = 0;  // Price at t = 0 (start price) or price today
+    float dividends = 0;   // Yearly percentage of divident payments (NOT USED)
+	float theta = 0;       // Theta value for the theta method
 };
 
 // Function to prompt input from the user
 fdmInputs promptInputs() {
     fdmInputs inputs;
+
+    cout << "Enter option type: \n0 for PUT,\n1 for CALL:" << endl;
+    cin >> inputs.optionType;
+    
+    cout << "Enter method type: \n0 for Explicit,\n1 for American Explicit (Q1),\n2 for Implicit,\n3 for Crank Nicolson,\n4 for Theta (Q2):" << endl;
+    cin >> inputs.methodType;
+	
+	// Special case for theta method
+    if (inputs.methodType == 4) {
+		cout << "Enter theta value in [0, 1] or -1 for the special case: ";
+		cin >> inputs.theta;
+	}
 
     cout << "Enter time horizon (years): ";
     cin >> inputs.timeHorizon;
@@ -343,87 +455,89 @@ fdmInputs promptInputs() {
     cout << "Enter starting price: ";
     cin >> inputs.startPrice;
 
-    // Compute maxS based on the strike price
-    inputs.maxS = 3 * inputs.strikePrice;
-
     return inputs;
 }
 
 int main()
 {   
-
-    //float timeHorizon = 1;          // One year
-    //float strikePrice = 100;        // Strike price of the option
-    //float startPrice = 100;         // Price when t=0
-    //float riskFreeR = 0.05;         // Risk Free interest rate
-    //float volatility = 0.2;         // Volatility in rand
-
+    // Get the inputs from the user
     fdmInputs inputs = promptInputs();
 
-    float timeHorizon = inputs.timeHorizon;          // One year
-    float strikePrice = inputs.strikePrice;        // Strike price of the option
-    float startPrice = inputs.startPrice;         // Price when t=0
-    float riskFreeR = inputs.riskFreeR;         // Risk Free interest rate
-    float volatility = inputs.volatility;         // Volatility in rand
-
-    float dividends = 0;            // NOT USED
-
-    float maxS = 3 * strikePrice;   // Should be three or four times the excersise price
+    // Should be three times the strike price
+	float maxS = 3 * inputs.strikePrice;   
 
     long int timesteps = 3000;      // Daily granularity 
     long int priceSteps = 180;      // Price granularity
 
+    // Create the FDM object
+    FiniteDifferenceMethod fdm(
+        inputs.timeHorizon,
+        timesteps,
+        maxS,
+        priceSteps,
+        inputs.strikePrice,
+        inputs.volatility,
+        inputs.riskFreeR,
+        inputs.startPrice
+    );
 
-    cout << "EXPLICIT PUT" << endl;
-    FiniteDifferenceMethod fdm(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    fdm.explicitMethod(OptionType::PUT);
-    //fdm.printGrid(fdm.priceSteps, fdm.timesteps);
-    //FiniteDifferenceMethod::printMatrix(fdm.grid);
-    //fdm.printGrid();
-    fdm.getPrice();    
-    //fdm.saveGridToCSV();
-
-    cout << "EXPLICIT CALL" << endl;
-    FiniteDifferenceMethod fdm2(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    fdm2.explicitMethod(OptionType::CALL);
-    //FiniteDifferenceMethod::printMatrix(fdm2.grid);
-    //fdm2.saveGridToCSV();
-    //fdm2.printGrid(fdm2.priceSteps, fdm2.timesteps);
-    fdm2.getPrice();
+	// Set the option type based on the user input
+    OptionType optionType;
+    switch (inputs.optionType) {
+    case 0:
+        optionType = OptionType::PUT;
+        break;
+    case 1:
+        optionType = OptionType::CALL;
+        break;
+    default:
+        cerr << "Invalid option type" << endl;
+    }
     
-
-    cout << "IMPLICIT PUT" << endl;
-    FiniteDifferenceMethod fdm3(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    fdm3.implicitMethod(OptionType::PUT);
-    //fdm3.printGrid(fdm3.priceSteps, fdm3.timesteps);
-    //FiniteDifferenceMethod::printMatrix(fdm3.grid);
-    //fdm3.printGrid();
-    fdm3.getPrice();    
-    //fdm3.saveGridToCSV();
-
-    cout << "IMPLICIT CALL" << endl;
-    FiniteDifferenceMethod fdm4(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    fdm4.implicitMethod(OptionType::CALL);
-    //FiniteDifferenceMethod::printMatrix(fdm4.grid);
-    //fdm4.saveGridToCSV();
-    //fdm4.printGrid(fdm4.priceSteps, fdm4.timesteps);
-    fdm4.getPrice();
-
-
-    cout << "CRANK PUT" << endl;
-    FiniteDifferenceMethod fdm5(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    fdm5.crankNicolson(OptionType::PUT);
-    //FiniteDifferenceMethod::printMatrix(fdm5.grid);
-    //fdm5.printGrid();
-    fdm5.getPrice();
-    //fdm5.saveGridToCSV();
-
-    cout << "CRANK CALL" << endl;
-    FiniteDifferenceMethod fdm6(timeHorizon, timesteps, maxS, priceSteps, strikePrice, volatility, riskFreeR, startPrice);
-    fdm6.crankNicolson(OptionType::CALL);
-    //fdm6.saveGridToCSV();
-    //fdm6.printGrid(fdm6.priceSteps, fdm6.timesteps);
-    fdm6.getPrice();
+	// Run the specific FDM method based on the user input
+    switch (inputs.methodType) {
+        case int(MethodType::EXPLICIT) :
+			fdm.explicitMethod(optionType);
+            fdm.getPrice();
+			break;
+        case int(MethodType::AMERICAN_EXPLICIT) :
+            fdm.americanExplicitMethod(optionType);
+            fdm.getPrice();
+            break;
+        case int(MethodType::IMPLICIT) :
+			fdm.implicitMethod(optionType);
+            fdm.getPrice();
+			break;
+        case int(MethodType::CRANK) :
+			fdm.crankNicolson(optionType);
+            fdm.getPrice();
+			break;
+        case int(MethodType::THETA) :
+            if (inputs.theta == -1) {
+                // SPECIAL CASE FOR THETA METHOD
+                // If the user enters -1, we run the special case for theta
+                // The special case is the error adjusted Crank Nicolson method. i.e.
+			    // having theta set to 0.5 + (1 / 12) * (deltaS^2 / deltaT) gives the exact weighting
+				// for half of the implicit and half of the explicit method adjusted for the error
+                // introduced by having discrete grid steps
+				
+                cout << "Running special case for theta method" << endl;
+                float specialTheta = 0.5 + (1 / 12) * pow(fdm.deltaS, 2) / fdm.deltaT;
+                fdm.thetaMethod(optionType, specialTheta);
+				cout << "Price for the special case: " << endl;
+                fdm.getPrice();
+                
+                cout << "Running Crank Nicolson for comparison: " << endl;
+                fdm.crankNicolson(optionType);
+                fdm.getPrice();
+            }
+            else {
+                fdm.thetaMethod(optionType, inputs.theta);
+            }			
+			break;
+        default:
+			cerr << "Invalid method type" << endl;
+    }
 
     cout << "Process Complete" << endl;
     return 0;
