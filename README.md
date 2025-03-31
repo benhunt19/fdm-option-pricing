@@ -1,4 +1,4 @@
-# Applied Computational Finance - Class Test (2025)
+# Finite Difference Methods for Option Pricing
 
 ## Overview
 This repository contains solutions and implementations for the **Applied Computational Finance** class test, focusing on **Finite Difference Methods (FDM)** for solving partial differential equations in option pricing.
@@ -13,4 +13,4 @@ This repository contains solutions and implementations for the **Applied Computa
 To run the provided code, ensure you have:
 - **C++ (or MATLAB/Python)** installed.
 - A working compiler/interpreter.
-- Necessary numerical libraries if applicable.
+- Compile and run in-class-test.cpp
